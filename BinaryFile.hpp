@@ -111,7 +111,7 @@ template <typename H, typename T>
 void File<H, T>::writeHeader(const H header)
 {
     _file.seekp(0);
-    _file.write((char *)&header, sizeof(Header));
+    _file.write((char *)&header, sizeof(H));
 }
 
 template <typename H, typename T>
