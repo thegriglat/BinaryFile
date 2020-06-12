@@ -28,7 +28,7 @@ struct Result
 };
 
 template <typename H, typename T>
-class File
+class BinaryFile
 {
 private:
     std::fstream _file;
@@ -37,8 +37,8 @@ private:
     int binary_search(const T element, int low, int high);
 
 public:
-    File(const char *filename);
-    ~File() { _file.close(); };
+    BinaryFile(const char *filename);
+    ~BinaryFile() { _file.close(); };
     void close() { _file.close(); }
     int count();
 
@@ -84,7 +84,7 @@ public:
 };
 
 template <typename H, typename T>
-File<H, T>::File(const char *filename)
+BinaryFile<H, T>::BinaryFile(const char *filename)
 {
     _file.open(filename, std::ios::in | std::ios::out | std::ios::binary);
     if (!_file.is_open())
@@ -98,7 +98,7 @@ File<H, T>::File(const char *filename)
 }
 
 template <typename H, typename T>
-int File<H, T>::count()
+int BinaryFile<H, T>::count()
 {
     const auto pos = _file.tellg();
     _file.seekg(0, _file.end);
@@ -108,14 +108,14 @@ int File<H, T>::count()
 }
 
 template <typename H, typename T>
-void File<H, T>::writeHeader(const H header)
+void BinaryFile<H, T>::writeHeader(const H header)
 {
     _file.seekp(0);
     _file.write((char *)&header, sizeof(H));
 }
 
 template <typename H, typename T>
-H File<H, T>::readHeader()
+H BinaryFile<H, T>::readHeader()
 {
     const auto pos = _file.tellg();
     _file.seekg(0, _file.beg);
@@ -127,14 +127,14 @@ H File<H, T>::readHeader()
 
 // write to the end; pos == -1 means end
 template <typename H, typename T>
-void File<H, T>::writeChunk(const T chunk)
+void BinaryFile<H, T>::writeChunk(const T chunk)
 {
     _file.write((char *)&chunk, sizeof(T));
     _isIndexed = false;
 }
 
 template <typename H, typename T>
-void File<H, T>::writeChunk(const T chunk, int pos)
+void BinaryFile<H, T>::writeChunk(const T chunk, int pos)
 {
     // starts of the data
     if (pos >= 0)
@@ -155,7 +155,7 @@ void File<H, T>::writeChunk(const T chunk, int pos)
 
 // read chunk at pos
 template <typename H, typename T>
-Result<T> File<H, T>::readChunk()
+Result<T> BinaryFile<H, T>::readChunk()
 {
     if (_file.tellg() < (int)sizeof(H))
         _file.seekg(sizeof(H));
@@ -175,7 +175,7 @@ Result<T> File<H, T>::readChunk()
 }
 
 template <typename H, typename T>
-Result<T> File<H, T>::readChunk(int pos)
+Result<T> BinaryFile<H, T>::readChunk(int pos)
 {
     int position = sizeof(H);
     if (pos >= 0)
@@ -187,7 +187,7 @@ Result<T> File<H, T>::readChunk(int pos)
 }
 
 template <typename H, typename T>
-void File<H, T>::indexChunks(bool (*fn)(const T a, const T b))
+void BinaryFile<H, T>::indexChunks(bool (*fn)(const T a, const T b))
 {
     setSortFunction(fn);
     std::vector<T> chunks = readChunks();
@@ -201,7 +201,7 @@ void File<H, T>::indexChunks(bool (*fn)(const T a, const T b))
 }
 
 template <typename H, typename T>
-int File<H, T>::binary_search(const T chunk, int low, int high)
+int BinaryFile<H, T>::binary_search(const T chunk, int low, int high)
 {
     if (!isIndexable())
         return -1;
@@ -236,7 +236,7 @@ int File<H, T>::binary_search(const T chunk, int low, int high)
 }
 
 template <typename H, typename T>
-Result<T> File<H, T>::find(const T chunk)
+Result<T> BinaryFile<H, T>::find(const T chunk)
 {
     if (!isIndexable())
     {
@@ -261,7 +261,7 @@ Result<T> File<H, T>::find(const T chunk)
 }
 
 template <typename H, typename T>
-std::vector<T> File<H, T>::filter(bool (*filterFn)(const T chunk))
+std::vector<T> BinaryFile<H, T>::filter(bool (*filterFn)(const T chunk))
 {
     const auto pos = _file.tellg();
     std::vector<T> res;
@@ -279,7 +279,7 @@ std::vector<T> File<H, T>::filter(bool (*filterFn)(const T chunk))
 }
 
 template <typename H, typename T>
-Result<T> File<H, T>::find(bool (*filterFn)(const T chunk))
+Result<T> BinaryFile<H, T>::find(bool (*filterFn)(const T chunk))
 {
     const auto pos = _file.tellg();
     Result<T> iter;
