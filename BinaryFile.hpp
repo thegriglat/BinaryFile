@@ -5,6 +5,47 @@
 #include <vector>
 #include <algorithm>
 
+#ifdef ZLIB_VERSION
+#define USE_ZLIB 1
+
+// libz helpers
+#include <cstdlib>
+#include "zlib.h"
+
+struct Compressed
+{
+    Bytef *data;
+    uLongf CompressedSize;
+    uLong UncompressedSize;
+};
+
+struct Uncompressed
+{
+    Bytef *data;
+    uLong size;
+};
+
+Compressed gz(Bytef *data, uLong size)
+{
+    uLongf destLen = compressBound(size);
+    Bytef *tgt = new Bytef[destLen];
+    compress(tgt, &destLen, data, size);
+    return {
+        .data = tgt,
+        .CompressedSize = destLen,
+        .UncompressedSize = size};
+}
+Uncompressed ungz(Compressed data)
+{
+    Bytef *tgt = new Bytef[data.UncompressedSize];
+    uLongf usize = data.UncompressedSize;
+    uncompress(tgt, &usize, data.data, data.CompressedSize);
+    return {
+        .data = tgt,
+        .size = usize};
+}
+#endif
+
 // like Option type
 template <typename T>
 struct Result
@@ -27,6 +68,7 @@ struct Result
     }
 };
 
+// main template class
 template <typename H, typename T>
 class BinaryFile
 {
@@ -296,6 +338,7 @@ Result<T> BinaryFile<H, T>::find(bool (*filterFn)(const T chunk))
     r.state = false;
     _file.seekg(pos);
     return r;
-}
+};
 
+#undef USEZLIB
 #endif
