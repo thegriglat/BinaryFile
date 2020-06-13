@@ -5,6 +5,7 @@
 #include <vector>
 #include <algorithm>
 
+#define ZLIB_VERSION
 #ifdef ZLIB_VERSION
 #define USE_ZLIB 1
 
@@ -17,12 +18,23 @@ struct Compressed
     Bytef *data;
     uLongf CompressedSize;
     uLong UncompressedSize;
+    bool compressed;
+    ~Compressed()
+    {
+        if (data)
+            delete[] data;
+    }
 };
 
 struct Uncompressed
 {
     Bytef *data;
     uLong size;
+    ~Uncompressed()
+    {
+        if (data)
+            delete[] data;
+    }
 };
 
 Compressed gz(Bytef *data, uLong size)
@@ -30,13 +42,31 @@ Compressed gz(Bytef *data, uLong size)
     uLongf destLen = compressBound(size);
     Bytef *tgt = new Bytef[destLen];
     compress(tgt, &destLen, data, size);
+    if (destLen < size)
+    {
+        return {
+            .data = tgt,
+            .CompressedSize = destLen,
+            .UncompressedSize = size,
+            .compressed = true};
+    }
+    // compressed size is greater than original data
+    // dont return compressed data
+    delete[] tgt;
     return {
-        .data = tgt,
-        .CompressedSize = destLen,
-        .UncompressedSize = size};
+        .data = data,
+        .CompressedSize = size,
+        .UncompressedSize = size,
+        .compressed = false};
 }
 Uncompressed ungz(Compressed data)
 {
+    if (!data.compressed)
+    {
+        return {
+            .data = data.data,
+            .size = data.UncompressedSize};
+    }
     Bytef *tgt = new Bytef[data.UncompressedSize];
     uLongf usize = data.UncompressedSize;
     uncompress(tgt, &usize, data.data, data.CompressedSize);
