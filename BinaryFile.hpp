@@ -4,14 +4,29 @@
 #include <fstream>
 #include <vector>
 #include <algorithm>
+#include <cstring>
+#include <iostream>
+using namespace std;
 
 #define ZLIB_VERSION
 #ifdef ZLIB_VERSION
 #define USE_ZLIB 1
 
+#ifndef CHUNK
+#define CHUNK 16384
+#else
+#error CHUNK
+#endif
+
 // libz helpers
 #include <cstdlib>
 #include "zlib.h"
+
+struct BunchHeader
+{
+    unsigned int compressedSize;
+    unsigned int chunkCount;
+};
 
 struct Compressed
 {
@@ -37,12 +52,12 @@ struct Uncompressed
     }
 };
 
-Compressed gz(Bytef *data, uLong size)
+Compressed gz(Bytef *data, uLong size, int compressionLevel)
 {
     uLongf destLen = compressBound(size);
     Bytef *tgt = new Bytef[destLen];
-    compress(tgt, &destLen, data, size);
-    if (destLen < size)
+    compress2(tgt, &destLen, data, size, compressionLevel);
+    if (true /*destLen < size*/)
     {
         return {
             .data = tgt,
@@ -107,12 +122,21 @@ private:
     bool (*_indexFn)(const T a, const T b) = nullptr;
     bool _isIndexed = false;
     int binary_search(const T element, int low, int high);
+    int _compressionLevel;
+    static const size_t _bunchSize = 3; // N chunks in 100K
+    std::vector<unsigned int> _bunchPositions;
+
+
 
 public:
-    BinaryFile(const char *filename);
+    BinaryFile(const char *filename, int compressionLevel = 0);
     ~BinaryFile() { _file.close(); };
     void close() { _file.close(); }
     int count();
+
+    int getBunchIndex(int chunchPos){
+        return chunchPos / _bunchSize;
+    }
 
     void writeHeader(const H header);
     H readHeader();
@@ -153,30 +177,60 @@ public:
     {
         return _isIndexed;
     }
+
+    bool useCompression() const
+    {
+        return (_compressionLevel != 0);
+    }
 };
 
 template <typename H, typename T>
-BinaryFile<H, T>::BinaryFile(const char *filename)
+BinaryFile<H, T>::BinaryFile(const char *filename, int compressionLevel)
 {
+    _compressionLevel = compressionLevel;
     _file.open(filename, std::ios::in | std::ios::out | std::ios::binary);
     if (!_file.is_open())
     {
+        // new file;
         _file.open(filename, std::ios::out | std::ios::in | std::fstream::trunc | std::ios::binary);
         if (!_file.is_open())
         {
             exit(1);
         }
     }
+    // not new file;
+    // populate bunch positions
+    _file.seekg(sizeof(H));
+    while (!_file.fail())
+    {
+        _bunchPositions.push_back(_file.tellg());
+        BunchHeader bh;
+        _file.read((char *)&bh, sizeof(BunchHeader));
+        _file.seekg(bh.compressedSize, _file.cur);
+    };
+    for (auto p : _bunchPositions)
+    {
+        cout << "bunch: " << p << endl;
+    }
+    _file.clear();
 }
 
 template <typename H, typename T>
 int BinaryFile<H, T>::count()
 {
     const auto pos = _file.tellg();
-    _file.seekg(0, _file.end);
-    const auto res = ((int)(_file.tellg()) - sizeof(H)) / sizeof(T);
+    int count = 0;
+    for (auto bpos : _bunchPositions)
+    {
+        cout << "bpos = " << bpos << endl;
+        _file.seekg(bpos);
+        BunchHeader bh;
+        _file.read((char *)&bh, sizeof(BunchHeader));
+        cout << "position = " << bpos << "\tbh.count = " << bh.chunkCount << endl;
+        count += bh.chunkCount;
+    }
     _file.seekg(pos);
-    return res;
+    return count;
 }
 
 template <typename H, typename T>
@@ -201,7 +255,67 @@ H BinaryFile<H, T>::readHeader()
 template <typename H, typename T>
 void BinaryFile<H, T>::writeChunk(const T chunk)
 {
-    _file.write((char *)&chunk, sizeof(T));
+    BunchHeader lastBunch;
+    _file.seekg(_bunchPositions[_bunchPositions.size() - 1]);
+    cout << "bunch position = " << _bunchPositions[_bunchPositions.size() - 1] << endl;
+    _file.read((char *)&lastBunch, sizeof(BunchHeader));
+    if (_file.eof())
+    {
+        cout << "_file.fail()!" << endl;
+        lastBunch.chunkCount = 0;
+        lastBunch.compressedSize = 0;
+        _file.clear();
+    }
+    cout << "bunch: count=" << lastBunch.chunkCount << "\tsize=" << lastBunch.compressedSize << endl;
+    if (lastBunch.chunkCount + 1 < _bunchSize)
+    {
+        cout << "write to current bunch" << endl;
+        // write in current bunch
+        // read all bunch
+        unsigned char *updatedChunks = new unsigned char[(lastBunch.chunkCount + 1) * sizeof(T)];
+        if (lastBunch.chunkCount != 0)
+        {
+            char *bunchData = new char[lastBunch.chunkCount * sizeof(T)];
+            cout << "allocate " << lastBunch.chunkCount * sizeof(T) << " bytes to bunchData" << endl;
+            _file.read(bunchData, lastBunch.chunkCount * sizeof(T));
+            Compressed c;
+            c.data = (Bytef *)bunchData;
+            c.CompressedSize = lastBunch.compressedSize;
+            c.UncompressedSize = lastBunch.chunkCount * sizeof(T);
+            Uncompressed r = ungz(c);
+            std::memcpy(updatedChunks, r.data, r.size);
+            cout << "updated = " << updatedChunks << endl;
+        }
+        unsigned char *updatePositionChunk = updatedChunks + lastBunch.chunkCount * sizeof(T);
+        // append chunk to uncompressed data
+        std::memcpy(updatePositionChunk, &chunk, sizeof(T));
+        cout << "updatedPos = " << updatedChunks << endl;
+
+        Compressed out = gz(updatedChunks, (lastBunch.chunkCount + 1) * sizeof(T), _compressionLevel);
+        // update bunch header and data
+        _file.seekp(_bunchPositions[_bunchPositions.size() - 1]);
+        lastBunch.chunkCount += 1;
+        lastBunch.compressedSize = out.CompressedSize;
+        cout << "after: lb count=" << lastBunch.chunkCount << "\tlb size=" << lastBunch.compressedSize << endl;
+        cout << "out.cs = " << out.data << "\t" << _file.tellp() << endl;
+        _file.write((char *)&lastBunch, sizeof(BunchHeader));
+        _file.write((char *)updatedChunks, out.CompressedSize);
+        delete[] updatedChunks;
+    }
+    else
+    {
+        cout << "write to new bunch" << endl;
+        // write new bunch
+        _file.seekp(0, _file.end);
+        BunchHeader bh;
+        bh.chunkCount = 0;
+        bh.compressedSize = 0;
+        _bunchPositions.push_back(_file.tellp());
+        cout << "append " << _file.tellp() << " to bunchpos" << endl;
+        _file.write((char *)&bh, sizeof(BunchHeader));
+        writeChunk(chunk);
+    }
+    _file.seekp(0, _file.end);
     _isIndexed = false;
 }
 
