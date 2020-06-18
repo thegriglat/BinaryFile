@@ -33,23 +33,12 @@ struct Compressed
     Bytef *data;
     uLongf CompressedSize;
     uLong UncompressedSize;
-    bool compressed;
-    ~Compressed()
-    {
-        if (data)
-            delete[] data;
-    }
 };
 
 struct Uncompressed
 {
     Bytef *data;
     uLong size;
-    ~Uncompressed()
-    {
-        if (data)
-            delete[] data;
-    }
 };
 
 Compressed gz(Bytef *data, uLong size, int compressionLevel)
@@ -57,31 +46,13 @@ Compressed gz(Bytef *data, uLong size, int compressionLevel)
     uLongf destLen = compressBound(size);
     Bytef *tgt = new Bytef[destLen];
     compress2(tgt, &destLen, data, size, compressionLevel);
-    if (true /*destLen < size*/)
-    {
-        return {
-            .data = tgt,
-            .CompressedSize = destLen,
-            .UncompressedSize = size,
-            .compressed = true};
-    }
-    // compressed size is greater than original data
-    // dont return compressed data
-    delete[] tgt;
     return {
-        .data = data,
-        .CompressedSize = size,
-        .UncompressedSize = size,
-        .compressed = false};
+        .data = tgt,
+        .CompressedSize = destLen,
+        .UncompressedSize = size};
 }
 Uncompressed ungz(Compressed data)
 {
-    if (!data.compressed)
-    {
-        return {
-            .data = data.data,
-            .size = data.UncompressedSize};
-    }
     Bytef *tgt = new Bytef[data.UncompressedSize];
     uLongf usize = data.UncompressedSize;
     uncompress(tgt, &usize, data.data, data.CompressedSize);
@@ -119,34 +90,36 @@ class BinaryFile
 {
 private:
     std::fstream _file;
-    bool (*_indexFn)(const T a, const T b) = nullptr;
+    bool (*_indexFn)(const T &a, const T &b) = nullptr;
     bool _isIndexed = false;
     int binary_search(const T element, int low, int high);
-    int _compressionLevel;
-    static const size_t _bunchSize = 3; // N chunks in 100K
+    int _compressionLevel = 9;
+    static const size_t _bunchSize = 2 * 1024 / sizeof(T); // N chunks in 100K
     std::vector<unsigned int> _bunchPositions;
 
-
-
 public:
-    BinaryFile(const char *filename, int compressionLevel = 0);
+    BinaryFile(const char *filename, int compressionLevel = 9);
     ~BinaryFile() { _file.close(); };
     void close() { _file.close(); }
     int count();
 
-    int getBunchIndex(int chunchPos){
+    void start()
+    {
+        _file.seekg(0);
+        _file.seekg(0);
+    }
+    int getBunchIndex(int chunchPos)
+    {
         return chunchPos / _bunchSize;
     }
 
-    void writeHeader(const H header);
-    H readHeader();
+    void writeHeader(const H &header);
+    void readHeader(H &header);
 
     // write to the end; pos == -1 means end
-    void writeChunk(const T chunk);
-    void writeChunk(const T chunk, int pos);
+    void writeChunk(const T &chunk);
     // read chunk at pos
-    Result<T> readChunk();
-    Result<T> readChunk(int pos);
+    void readChunk(T &chunk);
 
     // finds all matching chunks
     std::vector<T> filter(bool (*filterFn)(const T chunk));
@@ -157,13 +130,13 @@ public:
     }
 
     // find first matching chunk
-    Result<T> find(bool (*filterFn)(const T chunk));
+    Result<T> find(bool (*filterFn)(const T &chunk));
     // use qsort
     Result<T> find(const T chunk);
     // sort chunks using _indexFn
-    void indexChunks(bool (*fn)(const T a, const T b));
+    void indexChunks(bool (*fn)(const T &a, const T &b));
 
-    void setIndexFunction(bool (*fn)(const T a, const T b))
+    void setIndexFunction(bool (*fn)(const T &a, const T &b))
     {
         _indexFn = fn;
     }
@@ -176,11 +149,6 @@ public:
     bool isIndexed() const
     {
         return _isIndexed;
-    }
-
-    bool useCompression() const
-    {
-        return (_compressionLevel != 0);
     }
 };
 
@@ -197,6 +165,16 @@ BinaryFile<H, T>::BinaryFile(const char *filename, int compressionLevel)
         {
             exit(1);
         }
+        // write header and first bunch
+        _file.seekp(0);
+        H h;
+        _file.write((char *)&h, sizeof(H));
+        BunchHeader bh;
+        bh.chunkCount = 0;
+        bh.compressedSize = 0;
+        _file.write((char *)&bh, sizeof(BunchHeader));
+        _bunchPositions.push_back(sizeof(H));
+        return;
     }
     // not new file;
     // populate bunch positions
@@ -222,11 +200,9 @@ int BinaryFile<H, T>::count()
     int count = 0;
     for (auto bpos : _bunchPositions)
     {
-        cout << "bpos = " << bpos << endl;
         _file.seekg(bpos);
         BunchHeader bh;
         _file.read((char *)&bh, sizeof(BunchHeader));
-        cout << "position = " << bpos << "\tbh.count = " << bh.chunkCount << endl;
         count += bh.chunkCount;
     }
     _file.seekg(pos);
@@ -234,39 +210,43 @@ int BinaryFile<H, T>::count()
 }
 
 template <typename H, typename T>
-void BinaryFile<H, T>::writeHeader(const H header)
+void BinaryFile<H, T>::writeHeader(const H &header)
 {
+    const auto pos = _file.tellp();
     _file.seekp(0);
     _file.write((char *)&header, sizeof(H));
+    _file.seekp(pos);
 }
 
 template <typename H, typename T>
-H BinaryFile<H, T>::readHeader()
+void BinaryFile<H, T>::readHeader(H &header)
 {
     const auto pos = _file.tellg();
     _file.seekg(0, _file.beg);
-    H header;
     _file.read((char *)&header, sizeof(H));
     _file.seekg(pos);
-    return header;
 }
 
 // write to the end; pos == -1 means end
 template <typename H, typename T>
-void BinaryFile<H, T>::writeChunk(const T chunk)
+void BinaryFile<H, T>::writeChunk(const T &chunk)
 {
     BunchHeader lastBunch;
     _file.seekg(_bunchPositions[_bunchPositions.size() - 1]);
-    cout << "bunch position = " << _bunchPositions[_bunchPositions.size() - 1] << endl;
+    cout << "lastBunch pos = " << _bunchPositions[_bunchPositions.size() - 1] << "\ttellg() = " << _file.tellg() << endl;
+    ;
     _file.read((char *)&lastBunch, sizeof(BunchHeader));
-    if (_file.eof())
+
+    /*
+    if (_file.fail())
     {
-        cout << "_file.fail()!" << endl;
-        lastBunch.chunkCount = 0;
+        cout << "fail to read lastBunch" << endl;
         lastBunch.compressedSize = 0;
+        lastBunch.chunkCount = 0;
         _file.clear();
+        _file.seekp(0, _file.end);
     }
-    cout << "bunch: count=" << lastBunch.chunkCount << "\tsize=" << lastBunch.compressedSize << endl;
+    */
     if (lastBunch.chunkCount + 1 < _bunchSize)
     {
         cout << "write to current bunch" << endl;
@@ -275,35 +255,34 @@ void BinaryFile<H, T>::writeChunk(const T chunk)
         unsigned char *updatedChunks = new unsigned char[(lastBunch.chunkCount + 1) * sizeof(T)];
         if (lastBunch.chunkCount != 0)
         {
-            char *bunchData = new char[lastBunch.chunkCount * sizeof(T)];
-            cout << "allocate " << lastBunch.chunkCount * sizeof(T) << " bytes to bunchData" << endl;
-            _file.read(bunchData, lastBunch.chunkCount * sizeof(T));
+            char *bunchData = new char[lastBunch.compressedSize];
+            cout << "append. read from " << _file.tellg() << endl;
+            _file.read(bunchData, lastBunch.compressedSize);
             Compressed c;
             c.data = (Bytef *)bunchData;
             c.CompressedSize = lastBunch.compressedSize;
             c.UncompressedSize = lastBunch.chunkCount * sizeof(T);
             Uncompressed r = ungz(c);
             std::memcpy(updatedChunks, r.data, r.size);
-            cout << "updated = " << updatedChunks << endl;
+            delete[] bunchData;
         }
         unsigned char *updatePositionChunk = updatedChunks + lastBunch.chunkCount * sizeof(T);
         // append chunk to uncompressed data
         std::memcpy(updatePositionChunk, &chunk, sizeof(T));
-        cout << "updatedPos = " << updatedChunks << endl;
 
         Compressed out = gz(updatedChunks, (lastBunch.chunkCount + 1) * sizeof(T), _compressionLevel);
         // update bunch header and data
         _file.seekp(_bunchPositions[_bunchPositions.size() - 1]);
         lastBunch.chunkCount += 1;
         lastBunch.compressedSize = out.CompressedSize;
-        cout << "after: lb count=" << lastBunch.chunkCount << "\tlb size=" << lastBunch.compressedSize << endl;
-        cout << "out.cs = " << out.data << "\t" << _file.tellp() << endl;
+        cout << "Bunch compression = " << 100 * (float)lastBunch.compressedSize / ((float)lastBunch.chunkCount * sizeof(T)) << " %" << endl;
         _file.write((char *)&lastBunch, sizeof(BunchHeader));
         _file.write((char *)updatedChunks, out.CompressedSize);
         delete[] updatedChunks;
     }
     else
     {
+        cout << "lastBunch.size = " << lastBunch.chunkCount << endl;
         cout << "write to new bunch" << endl;
         // write new bunch
         _file.seekp(0, _file.end);
@@ -311,7 +290,6 @@ void BinaryFile<H, T>::writeChunk(const T chunk)
         bh.chunkCount = 0;
         bh.compressedSize = 0;
         _bunchPositions.push_back(_file.tellp());
-        cout << "append " << _file.tellp() << " to bunchpos" << endl;
         _file.write((char *)&bh, sizeof(BunchHeader));
         writeChunk(chunk);
     }
@@ -319,29 +297,9 @@ void BinaryFile<H, T>::writeChunk(const T chunk)
     _isIndexed = false;
 }
 
-template <typename H, typename T>
-void BinaryFile<H, T>::writeChunk(const T chunk, int pos)
-{
-    // starts of the data
-    if (pos >= 0)
-    {
-        _file.seekp(sizeof(H) + sizeof(T) * pos);
-    }
-    else
-    {
-        // write to the end
-        const auto gpos = _file.tellg();
-        _file.seekg(0, _file.end);
-        const long size = _file.tellg();
-        _file.seekg(gpos);
-        _file.seekp(size);
-    }
-    writeChunk(chunk);
-};
-
 // read chunk at pos
 template <typename H, typename T>
-Result<T> BinaryFile<H, T>::readChunk()
+void BinaryFile<H, T>::readChunk(T &chunk)
 {
     if (_file.tellg() < (int)sizeof(H))
         _file.seekg(sizeof(H));
@@ -361,19 +319,7 @@ Result<T> BinaryFile<H, T>::readChunk()
 }
 
 template <typename H, typename T>
-Result<T> BinaryFile<H, T>::readChunk(int pos)
-{
-    int position = sizeof(H);
-    if (pos >= 0)
-    {
-        position = sizeof(H) + sizeof(T) * pos;
-    }
-    _file.seekg(position);
-    return readChunk();
-}
-
-template <typename H, typename T>
-void BinaryFile<H, T>::indexChunks(bool (*fn)(const T a, const T b))
+void BinaryFile<H, T>::indexChunks(bool (*fn)(const T &a, const T &b))
 {
     setSortFunction(fn);
     std::vector<T> chunks = readChunks();
@@ -465,7 +411,7 @@ std::vector<T> BinaryFile<H, T>::filter(bool (*filterFn)(const T chunk))
 }
 
 template <typename H, typename T>
-Result<T> BinaryFile<H, T>::find(bool (*filterFn)(const T chunk))
+Result<T> BinaryFile<H, T>::find(bool (*filterFn)(const T &chunk))
 {
     const auto pos = _file.tellg();
     Result<T> iter;
