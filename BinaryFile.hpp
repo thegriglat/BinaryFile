@@ -97,9 +97,14 @@ private:
     int _compressionLevel = 6;
     size_t _bunchSize = 1024 / sizeof(T); // N chunks in 1K
     std::vector<unsigned int> _bunchPositions;
-    size_t currectChunk = 0;
+    size_t currentChunk = 0;
     size_t currentBunch = -1;
     Uncompressed currentBunchData = {.data = nullptr, .size = 0};
+
+    void setReadPos(size_t newpos)
+    {
+        currentChunk = newpos;
+    }
 
 public:
     BinaryFile(const char *filename, int compressionLevel = 6, int bunchSize = 1024 / sizeof(T));
@@ -124,6 +129,7 @@ public:
     void writeChunk(const T &chunk);
     // read chunk at pos
     void readChunk(T &chunk);
+    void readChunk(T &chunk, size_t position);
 
     // finds all matching chunks
     std::vector<T> filter(bool (*filterFn)(const T chunk));
@@ -288,7 +294,7 @@ void BinaryFile<H, T>::writeChunk(const T &chunk)
 template <typename H, typename T>
 void BinaryFile<H, T>::readChunk(T &chunk)
 {
-    const auto bunchIdx = getBunchIndex(currectChunk);
+    const auto bunchIdx = getBunchIndex(currentChunk);
     if (bunchIdx != currentBunch)
     {
         // read bunch data
@@ -308,12 +314,19 @@ void BinaryFile<H, T>::readChunk(T &chunk)
         currentBunch = bunchIdx;
         delete[] bunchData;
     }
-    auto chunkPosInBunch = currectChunk % (_bunchSize - 1);
+    auto chunkPosInBunch = currentChunk % (_bunchSize - 1);
     Bytef *tmp = new Bytef[sizeof(T)];
     std::memcpy(tmp, currentBunchData.data + chunkPosInBunch * sizeof(T), sizeof(T));
     chunk = *((T *)tmp);
     delete[] tmp;
-    currectChunk++;
+    currentChunk++;
+}
+
+template <typename H, typename T>
+void BinaryFile<H, T>::readChunk(T &chunk, size_t position)
+{
+    setReadPos(position);
+    readChunk(chunk);
 }
 
 template <typename H, typename T>

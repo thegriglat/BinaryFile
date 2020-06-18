@@ -24,21 +24,18 @@ int main(int argc, char **argv)
     BinaryFile<Header, Item> bf("binary.bin", 9);
     bf.writeHeader({.version = 2});
     cout << "### WRITE ###" << endl;
-    for (int i = 1200; i < c + 1200; ++i)
+    for (int i = 0; i < c; ++i)
     {
-        bf.writeChunk({.a = i});
+        bf.writeChunk({.a = i * i});
     }
     cout << "### WRITE END ###" << endl;
     cout << "count = " << bf.count() << endl;
 
-    for (int i = 0; i < bf.count(); ++i)
+    for (int i = 0; i < 3; ++i)
     {
         Item q;
-        bf.readChunk(q);
-        if (q.a != i + 1200)
-        {
-            cout << "TOO BAD!" << endl;
-        }
+        bf.readChunk(q, i);
+        cout << "bf[" << i << "].a = " << q.a << endl;
     }
     return 0;
 }
