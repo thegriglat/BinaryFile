@@ -155,11 +155,11 @@ BinaryFile<H, T>::BinaryFile(const char *filename, int compressionLevel, int bun
     _bunchSize = bunchSize;
     _compressionLevel = compressionLevel;
     _file.open(filename, std::ios::in | std::ios::out | std::ios::binary);
-    if (!_file.is_open())
+    if (!_file.good())
     {
         // new file;
         _file.open(filename, std::ios::out | std::ios::in | std::fstream::trunc | std::ios::binary);
-        if (!_file.is_open())
+        if (!_file.good())
         {
             exit(1);
         }
