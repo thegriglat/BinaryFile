@@ -98,14 +98,21 @@ private:
     size_t _bunchSize = 1024 / sizeof(T); // N chunks in 1K
     std::vector<unsigned int> _bunchPositions;
     size_t currectChunk = 0;
+    size_t currentBunch = -1;
+    Uncompressed currentBunchData = {.data = nullptr, .size = 0};
 
 public:
     BinaryFile(const char *filename, int compressionLevel = 6, int bunchSize = 1024 / sizeof(T));
-    ~BinaryFile() { _file.close(); };
+    ~BinaryFile()
+    {
+        if (currentBunchData.data)
+            delete[] currentBunchData.data;
+        _file.close();
+    };
     void close() { _file.close(); }
     int count();
 
-    int getBunchIndex(int chunchPos)
+    size_t getBunchIndex(int chunchPos)
     {
         return chunchPos / (_bunchSize - 1);
     }
@@ -282,25 +289,30 @@ template <typename H, typename T>
 void BinaryFile<H, T>::readChunk(T &chunk)
 {
     const auto bunchIdx = getBunchIndex(currectChunk);
-    // read bunch data
-    const auto bunchpos = _bunchPositions.at(bunchIdx);
-    BunchHeader bunch;
-    _file.seekg(bunchpos);
-    _file.read((char *)&bunch, sizeof(BunchHeader));
-    // read gzipped data
-    char *bunchData = new char[bunch.compressedSize];
-    _file.read(bunchData, bunch.compressedSize);
-    Compressed c;
-    c.data = (Bytef *)bunchData;
-    c.CompressedSize = bunch.compressedSize;
-    c.UncompressedSize = bunch.chunkCount * sizeof(T);
-    Uncompressed r = ungz(c);
+    if (bunchIdx != currentBunch)
+    {
+        // read bunch data
+        const auto bunchpos = _bunchPositions.at(bunchIdx);
+        BunchHeader bunch;
+        _file.seekg(bunchpos);
+        _file.read((char *)&bunch, sizeof(BunchHeader));
+        // read gzipped data
+        char *bunchData = new char[bunch.compressedSize];
+        _file.read(bunchData, bunch.compressedSize);
+        Compressed c;
+        c.data = (Bytef *)bunchData;
+        c.CompressedSize = bunch.compressedSize;
+        c.UncompressedSize = bunch.chunkCount * sizeof(T);
+        delete[] currentBunchData.data;
+        currentBunchData = ungz(c);
+        currentBunch = bunchIdx;
+        delete[] bunchData;
+    }
     auto chunkPosInBunch = currectChunk % (_bunchSize - 1);
     Bytef *tmp = new Bytef[sizeof(T)];
-    std::memcpy(tmp, r.data + chunkPosInBunch * sizeof(T), sizeof(T));
+    std::memcpy(tmp, currentBunchData.data + chunkPosInBunch * sizeof(T), sizeof(T));
     chunk = *((T *)tmp);
     delete[] tmp;
-    delete[] bunchData;
     currectChunk++;
 }
 
