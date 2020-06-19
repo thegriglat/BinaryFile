@@ -5,68 +5,53 @@
 #include <vector>
 #include <algorithm>
 #include <cstring>
-#include <iostream>
-using namespace std;
-
-#define ZLIB_VERSION
-#ifdef ZLIB_VERSION
-#define USE_ZLIB 1
-
-#ifndef CHUNK
-#define CHUNK 16384
-#else
-#error CHUNK
-#endif
-
-// libz helpers
-#include <cstdlib>
 #include "zlib.h"
-
-struct BunchHeader
-{
-    unsigned int compressedSize;
-    unsigned int chunkCount;
-};
-
-struct Compressed
-{
-    Bytef *data;
-    uLongf CompressedSize;
-    uLong UncompressedSize;
-};
-
-struct Uncompressed
-{
-    Bytef *data;
-    uLong size;
-};
-
-Compressed gz(Bytef *data, uLong size, int compressionLevel)
-{
-    uLongf destLen = compressBound(size);
-    Bytef *tgt = new Bytef[destLen];
-    compress2(tgt, &destLen, data, size, compressionLevel);
-    return {
-        .data = tgt,
-        .CompressedSize = destLen,
-        .UncompressedSize = size};
-}
-
-Uncompressed ungz(Compressed data)
-{
-    Bytef *tgt = new Bytef[data.UncompressedSize];
-    uLongf usize = data.UncompressedSize;
-    uncompress(tgt, &usize, data.data, data.CompressedSize);
-    return {
-        .data = tgt,
-        .size = usize};
-}
-#endif
 
 // main template class
 template <typename H, typename T>
 class BinaryFile
 {
+
+    struct BunchHeader
+    {
+        unsigned int compressedSize;
+        unsigned int chunkCount;
+    };
+
+    struct Compressed
+    {
+        Bytef *data;
+        uLongf CompressedSize;
+        uLong UncompressedSize;
+    };
+
+    struct Uncompressed
+    {
+        Bytef *data;
+        uLong size;
+    };
+
+    Compressed gz(Bytef *data, uLong size, int compressionLevel)
+    {
+        uLongf destLen = compressBound(size);
+        Bytef *tgt = new Bytef[destLen];
+        compress2(tgt, &destLen, data, size, compressionLevel);
+        return {
+            .data = tgt,
+            .CompressedSize = destLen,
+            .UncompressedSize = size};
+    }
+
+    Uncompressed ungz(Compressed data)
+    {
+        Bytef *tgt = new Bytef[data.UncompressedSize];
+        uLongf usize = data.UncompressedSize;
+        uncompress(tgt, &usize, data.data, data.CompressedSize);
+        return {
+            .data = tgt,
+            .size = usize};
+    }
+
 private:
     std::fstream _file;
     bool (*_indexFn)(const T &a, const T &b) = nullptr;
