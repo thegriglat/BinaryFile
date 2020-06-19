@@ -63,6 +63,7 @@ private:
     size_t currentChunk = 0;
     size_t currentBunch = -1;
     Uncompressed currentBunchData = {.data = nullptr, .size = 0};
+    Uncompressed currentWriteBunchData = {.data = nullptr, .size = 0};
 
     void setReadPos(size_t newpos)
     {
@@ -80,6 +81,9 @@ public:
     {
         if (currentBunchData.data)
             delete[] currentBunchData.data;
+        if (currentWriteBunchData.data)
+            delete[] currentWriteBunchData.data;
+
         _file.close();
     };
     void close() { _file.close(); }
@@ -212,26 +216,26 @@ void BinaryFile<H, T>::writeChunk(const T &chunk)
         lastBunch.compressedSize = 0;
         _bunchPositions.push_back(_file.tellp());
         _file.write((char *)&lastBunch, sizeof(BunchHeader));
+        // reset
+        delete[] currentWriteBunchData.data;
+        currentWriteBunchData.data = nullptr;
+        currentWriteBunchData.size = 0;
     };
 
     // read all bunch data
-    Bytef *updatedChunks = new Bytef[(lastBunch.chunkCount + 1) * sizeof(T)];
-    Bytef *updatedChunks_start = updatedChunks;
-    if (lastBunch.chunkCount != 0)
+    if (currentWriteBunchData.data != nullptr)
     {
-        Bytef *bunchData = new Bytef[lastBunch.compressedSize];
-        auto startpos = _bunchPositions[_bunchPositions.size() - 1] + sizeof(BunchHeader);
-        _file.seekg(startpos);
-        _file.read((char *)bunchData, lastBunch.compressedSize);
-        Compressed c;
-        c.data = bunchData;
-        c.CompressedSize = lastBunch.compressedSize;
-        c.UncompressedSize = lastBunch.chunkCount * sizeof(T);
-        Uncompressed r = ungz(c);
-        std::memcpy(updatedChunks, r.data, r.size);
-        delete[] bunchData;
-        delete[] r.data;
+        // realloc current buffer
+        currentWriteBunchData.data = (Bytef *)realloc(currentWriteBunchData.data, currentWriteBunchData.size + sizeof(T));
+        currentWriteBunchData.size += sizeof(T);
     }
+    else
+    {
+        currentWriteBunchData.data = new Bytef[sizeof(T)];
+        currentWriteBunchData.size = sizeof(T);
+    }
+    Bytef *updatedChunks = currentWriteBunchData.data;
+    Bytef *updatedChunks_start = updatedChunks;
     Bytef *updatePositionChunk = updatedChunks_start + lastBunch.chunkCount * sizeof(T);
     // append chunk to uncompressed data
     std::memcpy(updatePositionChunk, &chunk, sizeof(T));
@@ -242,7 +246,6 @@ void BinaryFile<H, T>::writeChunk(const T &chunk)
     _file.write((char *)&lastBunch, sizeof(BunchHeader));
     _file.write((char *)out.data, out.CompressedSize);
     delete[] out.data;
-    delete[] updatedChunks;
     _file.seekp(0, _file.end);
     _isIndexed = false;
 }
