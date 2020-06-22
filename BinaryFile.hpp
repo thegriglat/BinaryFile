@@ -75,6 +75,24 @@ private:
         return chunchPos / _bunchSize;
     }
 
+    bool _isSynced = true;
+    void sync()
+    {
+        if (_isSynced)
+            return;
+        BunchHeader lastBunch;
+        _file.seekg(_bunchPositions[_bunchPositions.size() - 1]);
+        _file.read((char *)&lastBunch, sizeof(BunchHeader));
+        Compressed out = gz(currentWriteBunchData.data, currentWriteBunchData.size, _compressionLevel);
+        lastBunch.compressedSize = out.CompressedSize;
+        _file.seekp(_bunchPositions[_bunchPositions.size() - 1]);
+        _file.write((char *)&lastBunch, sizeof(BunchHeader));
+        _file.write((char *)out.data, out.CompressedSize);
+        delete[] out.data;
+        _isSynced = true;
+        // synchronize unwritten buffer with disk
+    }
+
 public:
     BinaryFile(const char *filename, int compressionLevel = 6, int bunchSize = 1024 / sizeof(T));
     ~BinaryFile()
@@ -239,13 +257,18 @@ void BinaryFile<H, T>::writeChunk(const T &chunk)
     Bytef *updatePositionChunk = updatedChunks_start + lastBunch.chunkCount * sizeof(T);
     // append chunk to uncompressed data
     std::memcpy(updatePositionChunk, &chunk, sizeof(T));
-    Compressed out = gz(updatedChunks, (lastBunch.chunkCount + 1) * sizeof(T), _compressionLevel);
-    _file.seekp(_bunchPositions[_bunchPositions.size() - 1]);
     lastBunch.chunkCount += 1;
-    lastBunch.compressedSize = out.CompressedSize;
+    lastBunch.compressedSize = 0;
+    _file.seekp(_bunchPositions[_bunchPositions.size() - 1]);
     _file.write((char *)&lastBunch, sizeof(BunchHeader));
-    _file.write((char *)out.data, out.CompressedSize);
-    delete[] out.data;
+    // update bunch header
+    if (lastBunch.chunkCount == _bunchSize)
+    {
+        // write only at the end of bunch
+        // or at sync()
+        sync();
+    }
+    _isSynced = false;
     _file.seekp(0, _file.end);
     _isIndexed = false;
 }
@@ -254,6 +277,7 @@ void BinaryFile<H, T>::writeChunk(const T &chunk)
 template <typename H, typename T>
 void BinaryFile<H, T>::readChunk(T &chunk)
 {
+    sync();
     const auto bunchIdx = getBunchIndex(currentChunk);
     if (bunchIdx != currentBunch)
     {
