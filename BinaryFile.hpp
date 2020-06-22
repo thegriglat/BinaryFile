@@ -89,22 +89,30 @@ private:
         _file.write((char *)&lastBunch, sizeof(BunchHeader));
         _file.write((char *)out.data, out.CompressedSize);
         delete[] out.data;
+        delete[] currentWriteBunchData.data;
+        currentWriteBunchData.data = nullptr;
+        currentWriteBunchData.size = 0;
         _isSynced = true;
         // synchronize unwritten buffer with disk
     }
 
 public:
     BinaryFile(const char *filename, int compressionLevel = 6, int bunchSize = 1024 / sizeof(T));
-    ~BinaryFile()
+
+    void close()
     {
+        sync();
         if (currentBunchData.data)
             delete[] currentBunchData.data;
         if (currentWriteBunchData.data)
             delete[] currentWriteBunchData.data;
 
         _file.close();
+    }
+    ~BinaryFile()
+    {
+        close();
     };
-    void close() { _file.close(); }
     int count();
 
     void writeHeader(const H &header);
@@ -188,7 +196,6 @@ BinaryFile<H, T>::BinaryFile(const char *filename, int compressionLevel, int bun
 template <typename H, typename T>
 int BinaryFile<H, T>::count()
 {
-    const auto pos = _file.tellg();
     int count = 0;
     for (auto bpos : _bunchPositions)
     {
@@ -197,26 +204,21 @@ int BinaryFile<H, T>::count()
         _file.read((char *)&bh, sizeof(BunchHeader));
         count += bh.chunkCount;
     }
-    _file.seekg(pos);
     return count;
 }
 
 template <typename H, typename T>
 void BinaryFile<H, T>::writeHeader(const H &header)
 {
-    const auto pos = _file.tellp();
     _file.seekp(0);
     _file.write((char *)&header, sizeof(H));
-    _file.seekp(pos);
 }
 
 template <typename H, typename T>
 void BinaryFile<H, T>::readHeader(H &header)
 {
-    const auto pos = _file.tellg();
     _file.seekg(0, _file.beg);
     _file.read((char *)&header, sizeof(H));
-    _file.seekg(pos);
 }
 
 // write to the end; pos == -1 means end
@@ -244,7 +246,10 @@ void BinaryFile<H, T>::writeChunk(const T &chunk)
     if (currentWriteBunchData.data != nullptr)
     {
         // realloc current buffer
-        currentWriteBunchData.data = (Bytef *)realloc(currentWriteBunchData.data, currentWriteBunchData.size + sizeof(T));
+        Bytef *nlist = new Bytef[currentWriteBunchData.size + sizeof(T)];
+        std::memcpy(nlist, currentWriteBunchData.data, currentWriteBunchData.size);
+        delete[] currentWriteBunchData.data;
+        currentWriteBunchData.data = nlist;
         currentWriteBunchData.size += sizeof(T);
     }
     else
