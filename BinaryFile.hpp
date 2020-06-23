@@ -40,7 +40,7 @@ class BinaryFile
 
     Uncompressed ungz(Compressed data)
     {
-        Uncompressed tgt (data.UncompressedSize);
+        Uncompressed tgt(data.UncompressedSize);
         uLongf usize = data.UncompressedSize;
         uncompress(&(tgt[0]), &usize, data.data, data.CompressedSize);
         tgt.resize(usize);
@@ -170,14 +170,19 @@ BinaryFile<H, T>::BinaryFile(const char *filename, int compressionLevel, int bun
     }
     // not new file;
     // populate bunch positions
-    _file.seekg(sizeof(H));
-    while (!_file.fail())
+    _file.seekg(0, _file.end);
+    size_t _end = _file.tellg();
+    size_t pos = sizeof(H);
+    do
     {
-        _bunchPositions.push_back(_file.tellg());
+        _file.seekg(pos);
+        _bunchPositions.push_back(pos);
         BunchHeader bh;
         _file.read((char *)&bh, sizeof(BunchHeader));
         _file.seekg(bh.compressedSize, _file.cur);
-    };
+        pos += sizeof(BunchHeader) + bh.compressedSize;
+
+    } while (pos < _end);
     _file.clear();
 }
 
@@ -219,7 +224,7 @@ void BinaryFile<H, T>::writeChunk(const T &chunk)
     if (lastBunch.chunkCount + 1 > _bunchSize)
     {
         // write new bunch
-        _file.seekp(0, _file.end);
+        _file.seekp(lastBunch.compressedSize, _file.cur);
         lastBunch.chunkCount = 0;
         lastBunch.compressedSize = 0;
         _bunchPositions.push_back(_file.tellp());
