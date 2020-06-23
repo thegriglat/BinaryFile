@@ -2,6 +2,7 @@
 #define _BINARY_FILE_H
 
 #include <fstream>
+#include <string>
 #include <vector>
 #include <algorithm>
 #include <cstring>
@@ -48,6 +49,7 @@ class BinaryFile
     }
 
 private:
+    std::string _fname = "";
     std::fstream _file;
     bool (*_indexFn)(const T &a, const T &b) = nullptr;
     bool _isIndexed = false;
@@ -146,6 +148,7 @@ public:
 template <typename H, typename T>
 BinaryFile<H, T>::BinaryFile(const char *filename, int compressionLevel, int bunchSize)
 {
+    _fname = filename;
     _bunchSize = bunchSize;
     _compressionLevel = compressionLevel;
     _file.open(filename, std::ios::in | std::ios::out | std::ios::binary);
@@ -180,7 +183,7 @@ BinaryFile<H, T>::BinaryFile(const char *filename, int compressionLevel, int bun
         BunchHeader bh;
         _file.read((char *)&bh, sizeof(BunchHeader));
         _file.seekg(bh.compressedSize, _file.cur);
-        pos += sizeof(BunchHeader) + bh.compressedSize;
+        pos = _file.tellg();
 
     } while (pos < _end);
     _file.clear();
@@ -260,7 +263,7 @@ void BinaryFile<H, T>::writeChunk(const T &chunk)
         sync();
     }
     _isSynced = false;
-    _file.seekp(0, _file.end);
+    // _file.seekp(0, _file.end);
     _isIndexed = false;
 }
 
@@ -307,6 +310,12 @@ void BinaryFile<H, T>::indexChunks(bool (*fn)(const T &a, const T &b))
     setIndexFunction(fn);
     std::vector<T> chunks = readChunks();
     std::sort(chunks.begin(), chunks.end(), _indexFn);
+    H header;
+    readHeader(header);
+    // trunk file
+    close();
+    _file.open(_fname, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
+    writeHeader(header);
     _file.seekp(sizeof(H));
     BunchHeader bh;
     bh.chunkCount = 0;
@@ -366,13 +375,13 @@ int BinaryFile<H, T>::find(const T &chunk)
     {
         // TODO: operator== for T must be defined
         // TODO: Use find (<lambda>)
-        for (int i = 0; i < count(); ++i)
-        {
-            T item;
-            readChunk(item, i);
-            if (item == chunk)
-                return i;
-        }
+        // for (int i = 0; i < count(); ++i)
+        // {
+        //     T item;
+        //     readChunk(item, i);
+        //     if (item == chunk)
+        //         return i;
+        // }
         return -1;
     }
     auto pos = binary_search(chunk, 0, count());
@@ -386,7 +395,6 @@ int BinaryFile<H, T>::find(const T &chunk)
 template <typename H, typename T>
 std::vector<T> BinaryFile<H, T>::filter(bool (*filterFn)(const T chunk))
 {
-    const auto pos = _file.tellg();
     std::vector<T> res;
     res.reserve(count());
     for (int i = 0; i < count(); ++i)
@@ -396,8 +404,6 @@ std::vector<T> BinaryFile<H, T>::filter(bool (*filterFn)(const T chunk))
         if (filterFn(item))
             res.push_back(item);
     }
-    // reset pos
-    _file.seekg(pos);
     return res;
 }
 
